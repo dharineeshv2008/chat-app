@@ -20,3 +20,22 @@ export function canDeleteForEveryone(
 export function getDeleteEveryoneSecondsLeft(message: Message, now = Date.now()): number {
   return Math.ceil(getDeleteEveryoneRemainingMs(message, now) / 1000)
 }
+
+export function filterDeletableForEveryone(
+  messages: Message[],
+  ids: string[],
+  currentUser: UserName,
+): Message[] {
+  const byId = new Map(messages.map((m) => [m.id, m]))
+  return ids
+    .map((id) => byId.get(id))
+    .filter((m): m is Message => m != null && canDeleteForEveryone(m, currentUser))
+}
+
+export function canBulkDeleteForEveryone(
+  messages: Message[],
+  ids: string[],
+  currentUser: UserName,
+): boolean {
+  return filterDeletableForEveryone(messages, ids, currentUser).length > 0
+}

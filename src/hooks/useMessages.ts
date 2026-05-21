@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { assertSupabaseConfigured } from '../lib/env'
 import { debugLog } from '../lib/debug'
 import { formatSupabaseError } from '../lib/errors'
-import { canDeleteForEveryone } from '../lib/deleteUtils'
+import {
+  canDeleteForEveryone,
+  filterDeletableForEveryone,
+} from '../lib/deleteUtils'
 import { mergeMessages, normalizeMessage } from '../lib/messages'
 import { supabase } from '../lib/supabase'
 import type { Message, UserName } from '../types'
@@ -27,6 +30,10 @@ export function useMessages(currentUser: UserName) {
   messagesRef.current = messages
 
   const clearError = useCallback(() => setError(null), [])
+
+  const removeMessage = useCallback((messageId: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== messageId))
+  }, [])
 
   const appendMessage = useCallback((raw: unknown) => {
     const msg = normalizeMessage(raw)
@@ -130,6 +137,62 @@ export function useMessages(currentUser: UserName) {
     [currentUser, appendMessage, clearError],
   )
 
+  const deleteManyForEveryone = useCallback(
+    async (ids: string[]) => {
+      const eligible = filterDeletableForEveryone(
+        messagesRef.current,
+        ids,
+        currentUser,
+      )
+      if (eligible.length === 0) {
+        setError('No selected messages can be deleted for everyone (1 min limit, own messages only).')
+        return false
+      }
+
+      let failed = false
+      for (const msg of eligible) {
+        const { data, error: updateError } = await supabase
+          .from('messages')
+          .update({
+            deleted_for_everyone: true,
+            deleted_at: new Date().toISOString(),
+          })
+          .eq('id', msg.id)
+          .eq('sender', currentUser)
+          .eq('deleted_for_everyone', false)
+          .select('*')
+          .single()
+
+        if (updateError) {
+          failed = true
+          setError(formatSupabaseError(updateError.message))
+        } else if (data) {
+          appendMessage(data)
+        }
+      }
+
+      if (!failed) clearError()
+      return !failed
+    },
+    [currentUser, appendMessage, clearError],
+  )
+
+  const clearAllForEveryone = useCallback(async () => {
+    const { error: deleteError } = await supabase
+      .from('messages')
+      .delete()
+      .gte('created_at', '1970-01-01T00:00:00.000Z')
+
+    if (deleteError) {
+      setError(formatSupabaseError(deleteError.message))
+      return false
+    }
+
+    setMessages([])
+    clearError()
+    return true
+  }, [clearError])
+
   useEffect(() => {
     let cancelled = false
     const configError = assertSupabaseConfigured()
@@ -180,6 +243,22 @@ export function useMessages(currentUser: UserName) {
           appendMessage(payload.new)
         },
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          if (cancelled) return
+          const old = payload.old as { id?: string }
+          if (old?.id) {
+            debugLog('messages', 'Realtime DELETE', old.id)
+            removeMessage(String(old.id))
+          }
+        },
+      )
       .subscribe((status, err) => {
         debugLog('messages', 'Realtime status', status, err)
         if (cancelled) return
@@ -221,7 +300,7 @@ export function useMessages(currentUser: UserName) {
       window.removeEventListener('online', onOnline)
       void supabase.removeChannel(channel)
     }
-  }, [currentUser, appendMessage, fetchMessages, clearError])
+  }, [currentUser, appendMessage, removeMessage, fetchMessages, clearError])
 
   useEffect(() => {
     if (connectionStatus === 'connected') return
@@ -241,6 +320,8 @@ export function useMessages(currentUser: UserName) {
     connectionStatus,
     sendMessage,
     deleteForEveryone,
+    deleteManyForEveryone,
+    clearAllForEveryone,
     clearError,
     refetch: fetchMessages,
   }

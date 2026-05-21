@@ -73,7 +73,11 @@ create trigger messages_soft_delete_guard
   execute function public.enforce_message_soft_delete();
 
 grant usage on schema public to anon, authenticated;
-grant select, insert, update on public.messages to anon, authenticated;
+drop policy if exists "Allow delete messages" on public.messages;
+create policy "Allow delete messages"
+  on public.messages for delete using (true);
+
+grant select, insert, update, delete on public.messages to anon, authenticated;
 
 do $$
 begin

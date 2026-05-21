@@ -46,6 +46,15 @@ export function mergeMessages(existing: Message[], incoming: Message[]): Message
 export function filterVisibleMessages(
   messages: Message[],
   hiddenIds: Set<string>,
+  clearedAt: string | null,
 ): Message[] {
-  return messages.filter((m) => !hiddenIds.has(m.id))
+  const clearedTime = clearedAt ? new Date(clearedAt).getTime() : null
+
+  return messages.filter((m) => {
+    if (hiddenIds.has(m.id)) return false
+    if (clearedTime != null && new Date(m.created_at).getTime() <= clearedTime) {
+      return false
+    }
+    return true
+  })
 }

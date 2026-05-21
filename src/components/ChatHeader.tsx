@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { ChatMenu } from './ChatMenu'
 import { OnlineStatus } from './OnlineStatus'
 import type { RealtimeConnectionStatus } from '../hooks/useMessages'
 import type { UserName } from '../types'
@@ -7,7 +9,10 @@ interface ChatHeaderProps {
   otherUser: UserName
   isOtherOnline: boolean
   connectionStatus?: RealtimeConnectionStatus
+  selectionMode?: boolean
   onLogout: () => void
+  onClearChatForMe: () => void
+  onClearChatForEveryone: () => void
 }
 
 const AVATAR_COLORS: Record<UserName, string> = {
@@ -35,10 +40,15 @@ export function ChatHeader({
   otherUser,
   isOtherOnline,
   connectionStatus,
+  selectionMode = false,
   onLogout,
+  onClearChatForMe,
+  onClearChatForEveryone,
 }: ChatHeaderProps) {
+  const [menuOpen, setMenuOpen] = useState(false)
+
   return (
-    <header className="flex shrink-0 items-center gap-3 border-b border-chat-border bg-chat-panel px-4 py-3 sm:px-6">
+    <header className="relative flex shrink-0 items-center gap-3 border-b border-chat-border bg-chat-panel px-4 py-3 sm:px-6">
       <div
         className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white ${AVATAR_COLORS[otherUser]}`}
       >
@@ -53,10 +63,33 @@ export function ChatHeader({
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1">
         <span className="hidden rounded-lg bg-chat-surface px-2 py-1 text-xs text-chat-muted sm:inline">
           You: {currentUser}
         </span>
+
+        {!selectionMode && (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((o) => !o)}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-chat-muted transition hover:bg-chat-surface hover:text-white"
+              aria-label="Chat options"
+              aria-expanded={menuOpen}
+            >
+              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+              </svg>
+            </button>
+            <ChatMenu
+              open={menuOpen}
+              onClose={() => setMenuOpen(false)}
+              onClearForMe={onClearChatForMe}
+              onClearForEveryone={onClearChatForEveryone}
+            />
+          </div>
+        )}
+
         <button
           type="button"
           onClick={onLogout}
