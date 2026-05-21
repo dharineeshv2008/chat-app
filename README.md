@@ -101,10 +101,22 @@ Open the URL shown in the terminal (usually `http://localhost:5173`).
 
 1. Push the project to GitHub (or connect your repo in Vercel).
 2. Import the project in [vercel.com](https://vercel.com).
-3. Add environment variables in **Project Settings → Environment Variables**:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-4. Deploy. The included `vercel.json` handles SPA routing.
+3. Add environment variables in **Project Settings → Environment Variables** (all environments):
+   - `VITE_SUPABASE_URL` — e.g. `https://xxxx.supabase.co`
+   - `VITE_SUPABASE_ANON_KEY` — publishable key (`sb_publishable_...`)
+4. **Redeploy after adding env vars** — Vite bakes `VITE_*` into the build; changing env without redeploy leaves realtime broken.
+5. Run `supabase/enable_realtime.sql` in Supabase SQL Editor.
+6. In Supabase Dashboard: **Database → Replication** → enable **`messages`** under `supabase_realtime`.
+
+### Realtime not working on Vercel?
+
+| Check | Action |
+| ----- | ------ |
+| Env vars missing at build | Vercel → Settings → Env → **Redeploy** |
+| Realtime not enabled | Run `enable_realtime.sql` + toggle Replication in dashboard |
+| Messages only on refresh | Header shows "Syncing…" — realtime WebSocket is down; fix Supabase replication |
+
+The included `vercel.json` handles SPA routing.
 
 ```bash
 npm run build   # verify production build locally

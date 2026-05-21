@@ -1,18 +1,19 @@
 import { createClient } from '@supabase/supabase-js'
+import { getSupabaseConfig } from './env'
 import { debugLog } from './debug'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const { url, key, isConfigured } = getSupabaseConfig()
 
-if (!supabaseUrl || !supabaseAnonKey) {
+if (!isConfigured) {
   console.error(
-    '[supabase] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in .env.local',
+    '[supabase] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. ' +
+      'On Vercel: add env vars and redeploy (Vite embeds them at build time).',
   )
 } else {
-  debugLog('supabase', 'Client configured', { url: supabaseUrl })
+  debugLog('supabase', 'Configured', { url })
 }
 
-export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '', {
+export const supabase = createClient(url, key, {
   auth: {
     persistSession: false,
     autoRefreshToken: false,
@@ -24,3 +25,5 @@ export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '', {
     },
   },
 })
+
+export const isSupabaseConfigured = isConfigured

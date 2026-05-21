@@ -1,10 +1,12 @@
 import { OnlineStatus } from './OnlineStatus'
+import type { RealtimeConnectionStatus } from '../hooks/useMessages'
 import type { UserName } from '../types'
 
 interface ChatHeaderProps {
   currentUser: UserName
   otherUser: UserName
   isOtherOnline: boolean
+  connectionStatus?: RealtimeConnectionStatus
   onLogout: () => void
 }
 
@@ -13,10 +15,26 @@ const AVATAR_COLORS: Record<UserName, string> = {
   Friend: 'bg-emerald-600',
 }
 
+function LiveIndicator({ status }: { status?: RealtimeConnectionStatus }) {
+  if (!status || status === 'connected') return null
+  const label =
+    status === 'connecting' ? 'Connecting…' : status === 'error' ? 'Offline' : 'Syncing…'
+  const color =
+    status === 'error' ? 'bg-amber-400' : 'bg-yellow-400 animate-pulse'
+
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-chat-muted">
+      <span className={`h-1.5 w-1.5 rounded-full ${color}`} aria-hidden />
+      {label}
+    </span>
+  )
+}
+
 export function ChatHeader({
   currentUser,
   otherUser,
   isOtherOnline,
+  connectionStatus,
   onLogout,
 }: ChatHeaderProps) {
   return (
@@ -29,7 +47,10 @@ export function ChatHeader({
 
       <div className="min-w-0 flex-1">
         <h1 className="truncate font-semibold text-white">{otherUser}</h1>
-        <OnlineStatus isOnline={isOtherOnline} userName={otherUser} />
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <OnlineStatus isOnline={isOtherOnline} userName={otherUser} />
+          <LiveIndicator status={connectionStatus} />
+        </div>
       </div>
 
       <div className="flex items-center gap-2">

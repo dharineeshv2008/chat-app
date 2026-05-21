@@ -24,6 +24,7 @@ export function ChatPage() {
     messages,
     loading,
     error,
+    connectionStatus,
     sendMessage,
     deleteForEveryone,
     clearError,
@@ -47,6 +48,7 @@ export function ChatPage() {
         currentUser={currentUser}
         otherUser={otherUser}
         isOtherOnline={isOtherOnline(otherUser)}
+        connectionStatus={connectionStatus}
         onLogout={handleLogout}
       />
 

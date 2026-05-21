@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { assertSupabaseConfigured } from '../lib/env'
 import { debugLog } from '../lib/debug'
 import { formatSupabaseError } from '../lib/errors'
 import { canDeleteForEveryone } from '../lib/deleteUtils'
 import { mergeMessages, normalizeMessage } from '../lib/messages'
-import {
-  reconnectMessagesChannel,
-  subscribeToMessages,
-  type RealtimeConnectionStatus,
-} from '../lib/realtime/messagesChannel'
 import { supabase } from '../lib/supabase'
 import type { Message, UserName } from '../types'
 
-/** Fallback poll only when WebSocket realtime is down (not for normal operation). */
-const FALLBACK_POLL_MS = 12_000
+const REALTIME_CHANNEL = 'messages'
+const FALLBACK_POLL_MS = 4_000
+
+export type RealtimeConnectionStatus =
+  | 'connecting'
+  | 'connected'
+  | 'disconnected'
+  | 'error'
 
 export function useMessages(currentUser: UserName) {
   const [messages, setMessages] = useState<Message[]>([])
@@ -22,24 +24,37 @@ export function useMessages(currentUser: UserName) {
     useState<RealtimeConnectionStatus>('connecting')
 
   const messagesRef = useRef<Message[]>([])
-  const initialLoadDone = useRef(false)
-
   messagesRef.current = messages
 
   const clearError = useCallback(() => setError(null), [])
 
-  const upsertMessage = useCallback((raw: unknown) => {
+  const appendMessage = useCallback((raw: unknown) => {
     const msg = normalizeMessage(raw)
     if (!msg) {
-      debugLog('messages', 'Ignored invalid payload', raw)
+      debugLog('messages', 'Skip invalid payload', raw)
       return
     }
 
-    setMessages((prev) => mergeMessages(prev, [msg]))
-    debugLog('messages', 'Live upsert', msg.id)
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === msg.id)) {
+        return mergeMessages(prev, [msg])
+      }
+      const next = [...prev, msg].sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      )
+      debugLog('messages', 'Appended', msg.id, 'total', next.length)
+      return next
+    })
   }, [])
 
-  const fetchMessages = useCallback(async (isInitial = false) => {
+  const fetchMessages = useCallback(async () => {
+    const configError = assertSupabaseConfigured()
+    if (configError) {
+      setError(configError)
+      return false
+    }
+
     const { data, error: fetchError } = await supabase
       .from('messages')
       .select('*')
@@ -54,14 +69,7 @@ export function useMessages(currentUser: UserName) {
       .map(normalizeMessage)
       .filter((m): m is Message => m !== null)
 
-    setMessages((prev) => {
-      if (isInitial && !initialLoadDone.current) {
-        initialLoadDone.current = true
-        return normalized
-      }
-      return mergeMessages(prev, normalized)
-    })
-
+    setMessages((prev) => mergeMessages(prev, normalized))
     return true
   }, [])
 
@@ -81,11 +89,11 @@ export function useMessages(currentUser: UserName) {
         return false
       }
 
-      if (data) upsertMessage(data)
+      if (data) appendMessage(data)
       clearError()
       return true
     },
-    [currentUser, upsertMessage, clearError],
+    [currentUser, appendMessage, clearError],
   )
 
   const deleteForEveryone = useCallback(
@@ -115,22 +123,28 @@ export function useMessages(currentUser: UserName) {
         return false
       }
 
-      if (data) upsertMessage(data)
+      if (data) appendMessage(data)
       clearError()
       return true
     },
-    [currentUser, upsertMessage, clearError],
+    [currentUser, appendMessage, clearError],
   )
 
   useEffect(() => {
     let cancelled = false
-    initialLoadDone.current = false
+    const configError = assertSupabaseConfigured()
+    if (configError) {
+      setError(configError)
+      setLoading(false)
+      setConnectionStatus('error')
+      return
+    }
 
     async function loadInitial() {
       setLoading(true)
       try {
-        const ok = await fetchMessages(true)
-        if (!cancelled && ok) clearError()
+        await fetchMessages()
+        if (!cancelled) clearError()
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -138,27 +152,64 @@ export function useMessages(currentUser: UserName) {
 
     void loadInitial()
 
-    const unsubscribe = subscribeToMessages(
-      (row) => {
-        if (!cancelled) upsertMessage(row)
-      },
-      (status) => {
-        if (!cancelled) setConnectionStatus(status)
-      },
-    )
+    const channel = supabase
+      .channel(REALTIME_CHANNEL)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          if (cancelled) return
+          debugLog('messages', 'Realtime INSERT', payload.new)
+          appendMessage(payload.new)
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          if (cancelled) return
+          debugLog('messages', 'Realtime UPDATE', payload.new)
+          appendMessage(payload.new)
+        },
+      )
+      .subscribe((status, err) => {
+        debugLog('messages', 'Realtime status', status, err)
+        if (cancelled) return
+
+        if (status === 'SUBSCRIBED') {
+          setConnectionStatus('connected')
+          clearError()
+        } else if (
+          status === 'CHANNEL_ERROR' ||
+          status === 'TIMED_OUT' ||
+          status === 'CLOSED'
+        ) {
+          setConnectionStatus('disconnected')
+          setError((prev) =>
+            prev ??
+              'Live updates disconnected. Check Supabase Realtime is enabled for the messages table.',
+          )
+        } else if (status === 'SUBSCRIBING') {
+          setConnectionStatus('connecting')
+        }
+      })
 
     const onVisible = () => {
       if (document.visibilityState === 'visible' && !cancelled) {
-        void reconnectMessagesChannel()
-        void fetchMessages(false)
+        void fetchMessages()
       }
     }
 
     const onOnline = () => {
-      if (!cancelled) {
-        void reconnectMessagesChannel()
-        void fetchMessages(false)
-      }
+      if (!cancelled) void fetchMessages()
     }
 
     document.addEventListener('visibilitychange', onVisible)
@@ -166,21 +217,21 @@ export function useMessages(currentUser: UserName) {
 
     return () => {
       cancelled = true
-      unsubscribe()
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
+      void supabase.removeChannel(channel)
     }
-  }, [currentUser, upsertMessage, fetchMessages, clearError])
+  }, [currentUser, appendMessage, fetchMessages, clearError])
 
   useEffect(() => {
     if (connectionStatus === 'connected') return
 
-    const id = window.setInterval(() => {
-      debugLog('messages', 'Fallback poll (realtime disconnected)')
-      void fetchMessages(false)
+    const pollId = window.setInterval(() => {
+      debugLog('messages', 'Fallback sync (realtime not connected)')
+      void fetchMessages()
     }, FALLBACK_POLL_MS)
 
-    return () => clearInterval(id)
+    return () => clearInterval(pollId)
   }, [connectionStatus, fetchMessages])
 
   return {
@@ -191,6 +242,6 @@ export function useMessages(currentUser: UserName) {
     sendMessage,
     deleteForEveryone,
     clearError,
-    refetch: () => fetchMessages(false),
+    refetch: fetchMessages,
   }
 }
